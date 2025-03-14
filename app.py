@@ -46,7 +46,7 @@ def upload_file():
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
         file.save(filepath)
-        file_url = f"http://your-server-ip:5001/uploads/{filename}"
+        file_url = f"https://bug-free-telegram-x5597wr5w69gc9qr9-5000.app.github.dev/uploads/{filename}"
 
         return jsonify({"message": "File uploaded successfully", "file_url": file_url}), 201
 
