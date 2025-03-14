@@ -7,7 +7,7 @@ from datetime import datetime
 from flask import Flask, send_from_directory
 import os
 from werkzeug.utils import secure_filename
-
+import traceback
 
 # MongoDB Connection URI
 uri = "mongodb+srv://ByeByeExpired:VlbKjtFuYvgw0lAS@cluster0.rcivs.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
@@ -113,29 +113,44 @@ def get_items(user_id):
         item['user_id'] = str(item['user_id'])
     return jsonify(items), 200
 
-# API สำหรับการเพิ่มสินค้า
 @app.route('/add_item', methods=['POST'])
 def add_item():
-    data = request.get_json()
+    try:
+        data = request.get_json()
 
-    # เช็คข้อมูลที่ได้รับจาก body ว่ามีข้อมูลครบถ้วนไหม
-    required_fields = ['name', 'storage', 'storage_date', 'expiration_date', 'quantity', 'note', 'user_id']
-    if not all(field in data for field in required_fields):
-        return jsonify({"message": "Missing required fields"}), 400
-    
-    item = {
-        "photo": data.get('photo'),  # รูปภาพที่ผู้ใช้ส่งมา
-        "name": data.get('name'),
-        "storage": data.get('storage'),
-        "storage_date": datetime.strptime(data.get('storage_date'), "%Y-%m-%d"),  # การแปลงวันที่
-        "expiration_date": datetime.strptime(data.get('expiration_date'), "%Y-%m-%d"),  # การแปลงวันที่
-        "quantity": int(data.get('quantity')),
-        "note": data.get('note'),
-        "user_id": data.get('user_id')  # ใช้ user_id ที่ล็อกอินแล้ว
-    }
-    result = items_collection.insert_one(item)
-    return jsonify({"message": "Item added successfully", "id": str(result.inserted_id)}), 201
+        # เช็คข้อมูลที่ได้รับจาก body ว่ามีข้อมูลครบถ้วนไหม
+        required_fields = ['name', 'storage', 'storage_date', 'expiration_date', 'quantity', 'note', 'user_id']
+        if not all(field in data for field in required_fields):
+            return jsonify({"message": "Missing required fields"}), 400
 
+        # แปลงวันที่ให้เป็น datetime object และจัดการข้อผิดพลาด
+        try:
+            storage_date = datetime.strptime(data['storage_date'], "%Y-%m-%d")
+            expiration_date = datetime.strptime(data['expiration_date'], "%Y-%m-%d")
+        except ValueError:
+            return jsonify({"message": "Invalid date format. Use YYYY-MM-DD."}), 400
+        
+        # เตรียมข้อมูลที่จะบันทึกลงใน MongoDB
+        item = {
+            "photo": data.get('photo'),  # รูปภาพที่ผู้ใช้ส่งมา
+            "name": data.get('name'),
+            "storage": data.get('storage'),
+            "storage_date": storage_date,
+            "expiration_date": expiration_date,
+            "quantity": int(data.get('quantity')),
+            "note": data.get('note'),
+            "user_id": data.get('user_id')  # ใช้ user_id ที่ล็อกอินแล้ว
+        }
+
+        # บันทึกข้อมูลลงใน MongoDB
+        result = items_collection.insert_one(item)
+
+        return jsonify({"message": "Item added successfully", "id": str(result.inserted_id)}), 201
+    except Exception as e:
+        # แสดงข้อผิดพลาดในกรณีที่เกิดข้อผิดพลาดที่ไม่คาดคิด
+        print(f"Error: {e}")
+        traceback.print_exc()
+        return jsonify({"message": "Internal server error"}), 500
 # API สำหรับอัปเดตชื่อผู้ใช้
 @app.route('/update_profile', methods=['PUT'])
 def update_profile():
