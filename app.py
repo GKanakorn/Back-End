@@ -68,13 +68,16 @@ def register():
     # ตรวจสอบอีเมลว่าอยู่ในระบบแล้วหรือยัง
     existing_user = users_collection.find_one({"email": data['email']})
     if existing_user:
-        return jsonify({"message": "Email already exists"}), 400  # ส่งข้อความบอกว่าอีเมลนี้มีในระบบแล้ว
+        return jsonify({"message": "Email already exists"}), 400
 
     if data['password'] != data['confirmPassword']:
         return jsonify({"message": "Passwords do not match"}), 400
 
-    # ใช้ _id ของ MongoDB โดยไม่ต้องกำหนด user_id
+    # ใช้ฟังก์ชัน get_next_user_id ในการเพิ่ม user_id
+    new_user_id = get_next_user_id()
+
     user = {
+        "user_id": new_user_id,  # กำหนด user_id จากการคำนวณ
         "full_name": data['fullName'],
         "email": data['email'],
         "password": generate_password_hash(data['password']),
@@ -82,8 +85,9 @@ def register():
     }
     result = users_collection.insert_one(user)
     
-    return jsonify({"message": "User registered successfully", "id": str(result.inserted_id)}), 201
+    return jsonify({"message": "User registered successfully", "user_id": new_user_id}), 201
 
+# API สำหรับการล็อคอิน
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json()  # รับข้อมูลจาก request body (JSON)
@@ -97,7 +101,7 @@ def login():
         return jsonify({
             "message": "Login successful",
             "user": {
-                "_id": str(user['_id']),  # ส่ง _id เป็น string
+                "user_id": user['user_id'],  # ใช้ user_id แทน _id
                 "full_name": user['full_name'],
                 "email": user['email']
             }
@@ -109,78 +113,79 @@ def login():
 # API สำหรับดึงข้อมูลสินค้าของผู้ใช้
 @app.route('/get_items/<user_id>', methods=['GET'])
 def get_items(user_id):
-    # ใช้ _id ของผู้ใช้ในการค้นหาข้อมูลสินค้าที่เชื่อมโยง
-    items = list(items_collection.find({"user_id": user_id}))  # ใช้ _id โดยตรง
+    items = list(items_collection.find({"user_id": int(user_id)}))  # เชื่อมโยง user_id โดยใช้ int()
     for item in items:
         item['_id'] = str(item['_id'])
+        item['user_id'] = str(item['user_id'])
     return jsonify(items), 200
 
+# API สำหรับการเพิ่มสินค้า
 @app.route('/add_item', methods=['POST'])
 def add_item():
     try:
         data = request.get_json()
+        print("Received data:", data)  # เพิ่ม log เพื่อตรวจสอบข้อมูลที่รับมา
 
-        # ตรวจสอบว่ามีการส่ง user_id มาหรือไม่
-        if not data.get('_id'):
-            return jsonify({"message": "Missing user_id"}), 400  # แจ้งข้อผิดพลาดหากไม่มี _id
-
-        # เช็คข้อมูลที่ได้รับจาก body ว่ามีข้อมูลครบถ้วนไหม
-        required_fields = ['name', 'storage', 'storage_date', 'expiration_date', 'quantity', 'note', '_id']
+        required_fields = ['name', 'storage', 'storage_date', 'expiration_date', 'quantity', 'note']
         if not all(field in data for field in required_fields):
             return jsonify({"message": "Missing required fields"}), 400
 
-        # แปลงวันที่ให้เป็น datetime object และจัดการข้อผิดพลาด
+        user_id = data.get('user_id')
+        if not user_id:
+            return jsonify({"message": "User ID is required"}), 400
+
+        user = users_collection.find_one({"user_id": user_id})
+        if not user:
+            return jsonify({"message": "User not found"}), 400
+
         try:
             storage_date = datetime.strptime(data['storage_date'], "%Y-%m-%d")
             expiration_date = datetime.strptime(data['expiration_date'], "%Y-%m-%d")
         except ValueError:
             return jsonify({"message": "Invalid date format. Use YYYY-MM-DD."}), 400
         
-        # เตรียมข้อมูลที่จะบันทึกลงใน MongoDB
         item = {
-            "photo": data.get('photo'),  # รูปภาพที่ผู้ใช้ส่งมา
+            "photo": data.get('photo'),
             "name": data.get('name'),
             "storage": data.get('storage'),
             "storage_date": storage_date,
             "expiration_date": expiration_date,
             "quantity": int(data.get('quantity')),
             "note": data.get('note'),
-            "user_id": data.get('_id')  # ใช้ _id เป็น primary key (ไม่ต้องแปลงเป็น string)
+            "user_id": user_id
         }
 
-        # บันทึกข้อมูลลงใน MongoDB
         result = items_collection.insert_one(item)
-
         return jsonify({"message": "Item added successfully", "id": str(result.inserted_id)}), 201
     except Exception as e:
-        # แสดงข้อผิดพลาดในกรณีที่เกิดข้อผิดพลาดที่ไม่คาดคิด
         print(f"Error: {e}")
         traceback.print_exc()
         return jsonify({"message": "Internal server error"}), 500
-
+    
 # API สำหรับดึงข้อมูลผู้ใช้ทั้งหมด
 @app.route('/get_users', methods=['GET'])
 def get_users():
     users = list(users_collection.find())
     for user in users:
         user['_id'] = str(user['_id'])
+        user['user_id'] = str(user['user_id'])
     return jsonify(users), 200
 
 # API สำหรับการลบบัญชีผู้ใช้
 @app.route('/delete_account', methods=['DELETE'])
 def delete_account():
     data = request.get_json()
-    user_id = data.get('_id')  # ใช้ _id แทน user_id
+    user_id = data.get('user_id')
 
     if not user_id:
-        return jsonify({"message": "Missing _id"}), 400
+        return jsonify({"message": "Missing user_id"}), 400
 
     # ลบข้อมูลใน users_collection
-    result = users_collection.delete_one({"_id": user_id})
+    result = users_collection.delete_one({"user_id": int(user_id)})
     
     if result.deleted_count > 0:
-        # ลบข้อมูลใน items_collection ที่เชื่อมโยงกับ _id
-        items_collection.delete_many({"user_id": user_id})
+        # ลบข้อมูลใน items_collection ที่เชื่อมโยงกับ user_id
+        items_collection.delete_many({"user_id": int(user_id)})
         return jsonify({"message": "Account deleted successfully"}), 200
     return jsonify({"message": "User not found"}), 404
 
